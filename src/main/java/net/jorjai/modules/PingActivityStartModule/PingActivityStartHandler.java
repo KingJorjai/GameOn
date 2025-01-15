@@ -15,7 +15,7 @@ import java.util.*;
 
 public class PingActivityStartHandler {
 
-    private static Map<Long,String> activeUsers = Collections.synchronizedMap(new HashMap<>());
+    private static Map<Long,List<String>> activeUsers = Collections.synchronizedMap(new HashMap<>());
 
     public static boolean registerPing (long target_id, String game, long subscriber_id) {
         EntityManager em = Bot.getEmf().createEntityManager();
@@ -88,22 +88,27 @@ public class PingActivityStartHandler {
         long targetId = event.getUser().getIdLong();
         Activity.ActivityType activityType = event.getNewActivity().getType();
         String game = event.getNewActivity().getName();
+        String targetUsername = event.getUser().getName();
 
-        // Checks
+        // Return if the user is already in the active users list or the activity is a custom status
         if (
-            (activeUsers.containsKey(targetId) && game.equals(activeUsers.get(targetId))) || // Avoid multiple calls from each server
-            activityType == Activity.ActivityType.CUSTOM_STATUS                             // Ignore custom status
+            (activeUsers.containsKey(targetId) && activeUsers.get(targetId).contains(game)) ||  // Avoid multiple calls from each server
+            activityType == Activity.ActivityType.CUSTOM_STATUS                                 // Ignore custom status
         ) {
-            LoggerFactory.getLogger(PingActivityStartHandler.class).debug("Ignoring activity start event for user {}", event.getUser().getName());
+            LoggerFactory.getLogger(PingActivityStartHandler.class).debug("Ignoring activity {} start event for user {}", game, targetUsername);
             return;
         }
 
-        // Add the user to the active users list
-        activeUsers.put(targetId, game);
-        LoggerFactory.getLogger(PingActivityStartHandler.class).debug("Added user {} to the active users list with activity {}", event.getUser().getName(), game);
+        // Add the user to the active users list or add the activity to the user
+        if (!activeUsers.containsKey(targetId)) {
+            activeUsers.put(targetId, new LinkedList<>(List.of(game)));
+            LoggerFactory.getLogger(PingActivityStartHandler.class).debug("Added user {} to the active users list with activity {}", targetUsername, game);
+        } else {
+            activeUsers.get(targetId).add(game);
+            LoggerFactory.getLogger(PingActivityStartHandler.class).debug("Added activity {} to user {}", game, targetUsername);
+        }
 
         // Retrieve the game and the target username
-        String targetUsername = event.getUser().getName();
         String action = activityTypeToActionString(activityType);
 
 
@@ -125,19 +130,56 @@ public class PingActivityStartHandler {
         for (PingActivityStartData data : result) {
             event.getJDA().getUserById(data.getSubscriber_id()).openPrivateChannel().queue(privateChannel -> {
                 privateChannel.sendMessageEmbeds(embed).queue();
-                LoggerFactory.getLogger(PingActivityStartHandler.class).debug("Sent message to user " + data.getSubscriber_id());
+                LoggerFactory.getLogger(PingActivityStartHandler.class).debug("Sent activity {} start message to user {}", game, targetUsername);
             });
         }
     }
 
     public static void onUserActivityEnd(UserActivityEndEvent event) {
         long targetId = event.getUser().getIdLong();
+        String targetUsername = event.getUser().getName();
+        String game = event.getOldActivity().getName();
+        String action = activityTypeToActionString(event.getOldActivity().getType());
 
-        if(activeUsers.containsKey(targetId) && activeUsers.get(targetId).equals(event.getOldActivity().getName())){
-            LoggerFactory.getLogger(PingActivityStartHandler.class).debug("Removed user {} from the active users list", event.getUser().getName());
+        // Return if the user is not in the active users list to avoid duplicates
+        if (!activeUsers.containsKey(targetId) || !activeUsers.get(targetId).contains(game)) {
+            LoggerFactory.getLogger(PingActivityStartHandler.class).debug("Ignoring activity {} end event for user {}", event.getOldActivity().getName(), targetUsername);
+            return;
+        }
+
+        // Remove the activity from the user
+        activeUsers.get(targetId).remove(event.getOldActivity().getName());
+        LoggerFactory.getLogger(PingActivityStartHandler.class).debug("Removed activity {} from user {}", event.getOldActivity().getName(), targetUsername);
+
+        // Create the embed
+        MessageEmbed embed = new EmbedBuilder()
+                .setColor(0xff7088)
+                .setAuthor(targetUsername + " has stopped " + action + " " + game, null, event.getUser().getAvatarUrl())
+                .build();
+
+        // Look for subscribers to this game or all
+        EntityManager em = Bot.getEmf().createEntityManager();
+        Query query = em.createQuery("SELECT p FROM PingActivityStartData p WHERE p.target_id = :targetId AND (p.game = :game OR p.game = '*')");
+        query.setParameter("targetId", targetId);
+        query.setParameter("game", game);
+        List<PingActivityStartData> result = query.getResultList();
+        em.close();
+
+        // Send the message to the subscribers
+        for (PingActivityStartData data : result) {
+            event.getJDA().getUserById(data.getSubscriber_id()).openPrivateChannel().queue(privateChannel -> {
+                privateChannel.sendMessageEmbeds(embed).queue();
+                LoggerFactory.getLogger(PingActivityStartHandler.class).debug("Sent activity {} start message to user {}", game, targetUsername);
+            });
+        }
+
+        // If the user has no more activities, remove it from the active users list
+        if (activeUsers.get(targetId).isEmpty()) {
             activeUsers.remove(targetId);
+            LoggerFactory.getLogger(PingActivityStartHandler.class).debug("Removed user {} from the active users list", targetUsername);
         }
     }
+
 
     /**
      * Converts an activity type to a string that describes the action

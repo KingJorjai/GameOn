@@ -6,7 +6,7 @@
     <persistence-unit name="ping_activity_start_data" transaction-type="RESOURCE_LOCAL">
         <class>net.jorjai.modules.PingActivityStartModule.PingActivityStartData</class>
         <properties>
-            <property name="jakarta.persistence.jdbc.url" value="jdbc:h2:file:C:/Users/jorja/OneDrive/Documentos/testdb"/>
+            <property name="jakarta.persistence.jdbc.url" value="jdbc:h2:file:./database"/>
             <property name="jakarta.persistence.jdbc.user" value="root"/>
             <property name="jakarta.persistence.jdbc.password" value="password"/>
             <property name="jakarta.persistence.jdbc.driver" value="org.h2.Driver"/>

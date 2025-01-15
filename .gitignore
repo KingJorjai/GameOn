@@ -36,3 +36,9 @@ build/
 
 ### Mac OS ###
 .DS_Store
+
+### Other ###
+.env
+database.mv.db
+database.trace.db
+out/
